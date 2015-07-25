@@ -22,20 +22,21 @@ We welcome [contributions](CONTRIBUTING.md) to this guide.
 ## Contents
 
 * [Foundations](#foundations)
-  *  [Require TLS](#require-tls)
-  *  [Version with Accepts header](#version-with-accepts-header)
-  *  [Support caching with Etags](#support-caching-with-etags)
-  *  [Trace requests with Request-Ids](#trace-requests-with-request-ids)
-  *  [Paginate with ranges](#paginate-with-ranges)
+  *  [Separate Concerns](#separate-concerns)
+  *  [Require Secure Connections](#require-secure-connections)
+  *  [Require Versioning in the Accepts Header](#require-versioning-in-the-accepts-header)
+  *  [Support ETags for Caching](#support-etags-for-caching)
+  *  [Provide Request-Ids for Introspection](#provide-request-ids-for-introspection)
+  *  [Divide Large Responses Across Requests with Ranges](#divide-large-responses-across-requests-with-ranges)
 * [Requests](#requests)
-  *  [Return appropriate status codes](#return-appropriate-status-codes)
-  *  [Provide full resources where available](#provide-full-resources-where-available)
   *  [Accept serialized JSON in request bodies](#accept-serialized-json-in-request-bodies)
   *  [Use consistent path formats](#use-consistent-path-formats)
-  *  [Downcase paths and attributes](#downcase-paths-and-attributes)
-  *  [Support non-id dereferencing for convenience](#support-non-id-dereferencing-for-convenience)
-  *  [Minimize path nesting](#minimize-path-nesting)
+    *  [Downcase paths and attributes](#downcase-paths-and-attributes)
+    *  [Support non-id dereferencing for convenience](#support-non-id-dereferencing-for-convenience)
+    *  [Minimize path nesting](#minimize-path-nesting)
 * [Responses](#responses)
+  *  [Return appropriate status codes](#return-appropriate-status-codes)
+  *  [Provide full resources where available](#provide-full-resources-where-available)
   *  [Provide resource (UU)IDs](#provide-resource-uuids)
   *  [Provide standard timestamps](#provide-standard-timestamps)
   *  [Use UTC times formatted in ISO8601](#use-utc-times-formatted-in-iso8601)
@@ -48,14 +49,27 @@ We welcome [contributions](CONTRIBUTING.md) to this guide.
   *  [Provide human-readable docs](#provide-human-readable-docs)
   *  [Provide executable examples](#provide-executable-examples)
   *  [Describe stability](#describe-stability)
+* [Translations](#translations)
 
 ### Foundations
 
-#### Require TLS
+#### Separate Concerns
 
-Require TLS to access the API, without exception. It’s not worth trying
-to figure out or explain when it is OK to use TLS and when it’s not.
-Just require TLS for everything.
+Keep things simple while designing by separating the concerns between the
+different parts of the request and response cycle. Keeping simple rules here
+allows for greater focus on larger and harder problems.
+
+Requests and responses will be made to address a particular resource or
+collection. Use the path to indicate identity, the body to transfer the
+contents and headers to communicate metadata. Query params may be used as a
+means to pass header information also in edge cases, but headers are preferred
+as they are more flexible and can convey more diverse information.
+
+#### Require Secure Connections
+
+Require secure connections with TLS to access the API, without exception.
+It’s not worth trying to figure out or explain when it is OK to use TLS
+and when it’s not. Just require TLS for everything.
 
 Ideally, simply reject any non-TLS requests by not responding to requests for
 http or port 80 to avoid any insecure data exchange. In environments where this
@@ -66,103 +80,45 @@ providing any clear gain.  Clients that rely on redirects double up on
 server traffic and render TLS useless since sensitive data will already
  have been exposed during the first call.
 
-#### Version with Accepts header
+#### Require Versioning in the Accepts Header
 
-Version the API from the start. Use the `Accepts` header to communicate
-the version, along with a custom content type, e.g.:
+Versioning and the transition between versions can be one of the more
+challenging aspects of designing and operating an API. As such, it is best to
+start with some mechanisms in place to mitigate this from the start.
+
+To prevent surprise, breaking changes to users, it is best to require a version
+be specified with all requests. Default versions should be avoided as they are
+very difficult, at best, to change in the future.
+
+It is best to provide version specification in the headers, with other
+metadata, using the `Accept` header with a custom content type, e.g.:
 
 ```
 Accept: application/vnd.heroku+json; version=3
 ```
 
-Prefer not to have a default version, instead requiring clients to
-explicitly peg their usage to a specific version.
-
-#### Support caching with Etags
+#### Support ETags for Caching
 
 Include an `ETag` header in all responses, identifying the specific
-version of the returned resource. The user should be able to check for
-staleness in their subsequent requests by supplying the value in the
-`If-None-Match` header.
+version of the returned resource. This allows users to cache resources
+and use requests with this value in the `If-None-Match` header to determine
+if the cache should be updated.
 
-#### Trace requests with Request-Ids
+#### Provide Request-Ids for Introspection
 
 Include a `Request-Id` header in each API response, populated with a
-UUID value. If both the server and client log these values, it will be
-helpful for tracing and debugging requests.
+UUID value. By logging these values on the client, server and any backing
+services, it provides a mechanism to trace, diagnose and debug requests.
 
-#### Paginate with Ranges
+#### Divide Large Responses Across Requests with Ranges
 
-Paginate any responses that are liable to produce large amounts of data.
-Use `Content-Range` headers to convey pagination requests. Follow the
-example of the [Heroku Platform API on Ranges](https://devcenter.heroku.com/articles/platform-api-reference#ranges)
+Large responses should be broken across multiple requests using `Range` headers
+to specify when more data is available and how to retrieve it. See the
+[Heroku Platform API discussion of Ranges](https://devcenter.heroku.com/articles/platform-api-reference#ranges)
 for the details of request and response headers, status codes, limits,
-ordering, and page-walking.
+ordering, and iteration.
 
 ### Requests
-
-#### Return appropriate status codes
-
-Return appropriate HTTP status codes with each response. Successful
-responses should be coded according to this guide:
-
-* `200`: Request succeeded for a `GET` calls, and for `DELETE` or
-  `PATCH` calls that complete synchronously
-* `201`: Request succeeded for a `POST` call that completes
-  synchronously
-* `202`: Request accepted for a `POST`, `DELETE`, or `PATCH` call that
-  will be processed asynchronously
-* `206`: Request succeeded on `GET`, but only a partial response
-  returned: see [above on ranges](#paginate-with-ranges)
-
-Pay attention to the use of authentication and authorization error codes:
-
-* `401 Unauthorized`: Request failed because user is not authenticated
-* `403 Forbidden`: Request failed because user does not have authorization to access a specific resource
-
-Return suitable codes to provide additional information when there are errors:
-
-* `422 Unprocessable Entity`: Your request was understood, but contained invalid parameters
-* `429 Too Many Requests`: You have been rate-limited, retry later
-* `500 Internal Server Error`: Something went wrong on the server, check status site and/or report the issue
-
-Refer to the [HTTP response code spec](https://tools.ietf.org/html/rfc7231#section-6)
-for guidance on status codes for user error and server error cases.
-
-#### Provide full resources where available
-
-Provide the full resource representation (i.e. the object with all
-attributes) whenever possible in the response. Always provide the full
-resource on 200 and 201 responses, including `PUT`/`PATCH` and `DELETE`
-requests, e.g.:
-
-```
-$ curl -X DELETE \  
-  https://service.com/apps/1f9b/domains/0fd4
-
-HTTP/1.1 200 OK
-Content-Type: application/json;charset=utf-8
-...
-{
-  "created_at": "2012-01-01T12:00:00Z",
-  "hostname": "subdomain.example.com",
-  "id": "01234567-89ab-cdef-0123-456789abcdef",
-  "updated_at": "2012-01-01T12:00:00Z"
-}
-```
-
-202 responses will not include the full resource representation,
-e.g.:
-
-```
-$ curl -X DELETE \  
-  https://service.com/apps/1f9b/dynos/05bd
-
-HTTP/1.1 202 Accepted
-Content-Type: application/json;charset=utf-8
-...
-{}
-```
 
 #### Accept serialized JSON in request bodies
 
@@ -170,7 +126,7 @@ Accept serialized JSON on `PUT`/`PATCH`/`POST` request bodies, either
 instead of or in addition to form-encoded data. This creates symmetry
 with JSON-serialized response bodies, e.g.:
 
-```
+```bash
 $ curl -X POST https://service.com/apps \
     -H "Content-Type: application/json" \
     -d '{"name": "demoapp"}'
@@ -232,7 +188,7 @@ identify a resource. For example, a user may think in terms of a Heroku
 app name, but that app may be identified by a UUID. In these cases you
 may want to accept both an id or name, e.g.:
 
-```
+```bash
 $ curl https://service.com/apps/{app_id_or_name}
 $ curl https://service.com/apps/97addcf0-c182
 $ curl https://service.com/apps/www-prod
@@ -263,6 +219,71 @@ case above where a dyno belongs to an app belongs to an org:
 
 ### Responses
 
+#### Return appropriate status codes
+
+Return appropriate HTTP status codes with each response. Successful
+responses should be coded according to this guide:
+
+* `200`: Request succeeded for a `GET` call, for a `DELETE` or
+  `PATCH` call that completed synchronously, or for a `PUT` call that
+  synchronously updated an existing resource
+* `201`: Request succeeded for a `POST` call that completed
+  synchronously, or for a `PUT` call that synchronously created a new
+  resource
+* `202`: Request accepted for a `POST`, `PUT`, `DELETE`, or `PATCH` call that
+  will be processed asynchronously
+* `206`: Request succeeded on `GET`, but only a partial response
+  returned: see [above on ranges](#divide-large-responses-across-requests-with-ranges)
+
+Pay attention to the use of authentication and authorization error codes:
+
+* `401 Unauthorized`: Request failed because user is not authenticated
+* `403 Forbidden`: Request failed because user does not have authorization to access a specific resource
+
+Return suitable codes to provide additional information when there are errors:
+
+* `422 Unprocessable Entity`: Your request was understood, but contained invalid parameters
+* `429 Too Many Requests`: You have been rate-limited, retry later
+* `500 Internal Server Error`: Something went wrong on the server, check status site and/or report the issue
+
+Refer to the [HTTP response code spec](https://tools.ietf.org/html/rfc7231#section-6)
+for guidance on status codes for user error and server error cases.
+
+#### Provide full resources where available
+
+Provide the full resource representation (i.e. the object with all
+attributes) whenever possible in the response. Always provide the full
+resource on 200 and 201 responses, including `PUT`/`PATCH` and `DELETE`
+requests, e.g.:
+
+```bash
+$ curl -X DELETE \  
+  https://service.com/apps/1f9b/domains/0fd4
+
+HTTP/1.1 200 OK
+Content-Type: application/json;charset=utf-8
+...
+{
+  "created_at": "2012-01-01T12:00:00Z",
+  "hostname": "subdomain.example.com",
+  "id": "01234567-89ab-cdef-0123-456789abcdef",
+  "updated_at": "2012-01-01T12:00:00Z"
+}
+```
+
+202 responses will not include the full resource representation,
+e.g.:
+
+```bash
+$ curl -X DELETE \  
+  https://service.com/apps/1f9b/dynos/05bd
+
+HTTP/1.1 202 Accepted
+Content-Type: application/json;charset=utf-8
+...
+{}
+```
+
 #### Provide resource (UU)IDs
 
 Give each resource an `id` attribute by default. Use UUIDs unless you
@@ -281,12 +302,12 @@ Render UUIDs in downcased `8-4-4-4-12` format, e.g.:
 Provide `created_at` and `updated_at` timestamps for resources by default,
 e.g:
 
-```json
+```javascript
 {
-  ...
+  // ...
   "created_at": "2012-01-01T12:00:00Z",
   "updated_at": "2012-01-01T13:00:00Z",
-  ...
+  // ...
 }
 ```
 
@@ -306,23 +327,23 @@ e.g.:
 
 Serialize foreign key references with a nested object, e.g.:
 
-```json
+```javascript
 {
   "name": "service-production",
   "owner": {
     "id": "5d8201b0..."
   },
-  ...
+  // ...
 }
 ```
 
-Instead of e.g:
+Instead of e.g.:
 
-```json
+```javascript
 {
   "name": "service-production",
   "owner_id": "5d8201b0...",
-  ...
+  // ...
 }
 ```
 
@@ -330,7 +351,7 @@ This approach makes it possible to inline more information about the
 related resource without having to change the structure of the response
 or introduce more top-level response fields, e.g.:
 
-```json
+```javascript
 {
   "name": "service-production",
   "owner": {
@@ -338,7 +359,7 @@ or introduce more top-level response fields, e.g.:
     "name": "Alice",
     "email": "alice@heroku.com"
   },
-  ...
+  // ...
 }
 ```
 
@@ -381,7 +402,7 @@ clients for human consumption will automatically "prettify" JSON
 output. It is best to keep JSON responses minified e.g.:
 
 ```json
-{"beta":false,"email":"alice@heroku.com","id":"01234567-89ab-cdef-0123-456789abcdef","last_login":"2012-01-01T12:00:00Z", "created_at":"2012-01-01T12:00:00Z","updated_at":"2012-01-01T12:00:00Z"}
+{"beta":false,"email":"alice@heroku.com","id":"01234567-89ab-cdef-0123-456789abcdef","last_login":"2012-01-01T12:00:00Z","created_at":"2012-01-01T12:00:00Z","updated_at":"2012-01-01T12:00:00Z"}
 ```
 
 Instead of e.g.:
@@ -397,7 +418,7 @@ Instead of e.g.:
 }
 ```
 
-You may consider optionally providing a way for clients to retreive 
+You may consider optionally providing a way for clients to retrieve 
 more verbose response, either via a query parameter (e.g. `?pretty=true`)
 or via an `Accept` header param (e.g.
 `Accept: application/vnd.heroku+json; version=3; indent=4;`).
@@ -416,7 +437,7 @@ Provide human-readable documentation that client developers can use to
 understand your API.
 
 If you create a schema with prmd as described above, you can easily
-generate Markdown docs for all endpoints with with `prmd doc`.
+generate Markdown docs for all endpoints with `prmd doc`.
 
 In addition to endpoint details, provide an API overview with
 information about:
@@ -435,7 +456,7 @@ terminals to see working API calls. To the greatest extent possible,
 these examples should be usable verbatim, to minimize the amount of
 work a user needs to do to try the API, e.g.:
 
-```
+```bash
 $ export TOKEN=... # acquire from dashboard
 $ curl -is https://$TOKEN@service.com/users
 ```
@@ -456,4 +477,13 @@ Once your API is declared production-ready and stable, do not make
 backwards incompatible changes within that API version. If you need to
 make backwards-incompatible changes, create a new API with an
 incremented version number.
+
+
+### Translations
+ * [Portuguese version](https://github.com/Gutem/http-api-design/) (based on [fba98f08b5](https://github.com/interagent/http-api-design/commit/fba98f08b50acbb08b7b30c012a6d0ca795e29ee)), by [@Gutem](https://github.com/Gutem/)
+ * [Spanish version](https://github.com/jmnavarro/http-api-design) (based on [2a74f45](https://github.com/interagent/http-api-design/commit/2a74f45b9afaf6c951352f36c3a4e1b0418ed10b)), by [@jmnavarro](https://github.com/jmnavarro/)
+ * [Korean version](https://github.com/yoondo/http-api-design) (based on [f38dba6](https://github.com/interagent/http-api-design/commit/f38dba6fd8e2b229ab3f09cd84a8828987188863)), by [@yoondo](https://github.com/yoondo/)
+ * [Simplified Chinese version](https://github.com/ZhangBohan/http-api-design-ZH_CN) (based on [337c4a0](https://github.com/interagent/http-api-design/commit/337c4a05ad08f25c5e232a72638f063925f3228a)), by [@ZhangBohan](https://github.com/ZhangBohan/)
+ * [Traditional Chinese version](https://github.com/kcyeu/http-api-design) (based on [232f8dc](https://github.com/interagent/http-api-design/commit/232f8dc6a941d0b25136bf64998242dae5575f66)), by [@kcyeu](https://github.com/kcyeu/)
+ * [Turkish version](https://github.com/hkulekci/http-api-design/tree/master/tr) (based on [c03842f](https://github.com/interagent/http-api-design/commit/c03842fda80261e82860f6dc7e5ccb2b5d394d51)), by [@hkulekci](https://github.com/hkulekci/)
 
