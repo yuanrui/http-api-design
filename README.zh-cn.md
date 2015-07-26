@@ -9,6 +9,7 @@ extracted from work on the [Heroku Platform API](https://devcenter.heroku.com/ar
 This guide informs additions to that API and also guides new internal
 APIs at Heroku. We hope it’s also of interest to API designers
 outside of Heroku.
+这份指南是对API设计的补充，同时也是Heroku内部新指南。我们希望引起Heroku以外API设计者的兴趣。
 
 Our goals here are consistency and focusing on business logic while
 avoiding design bikeshedding. We’re looking for _a good, consistent,
